@@ -1,0 +1,20 @@
+# Secrets — NEVER commit these. Set them as Vercel Environment Variables instead.
+.env
+.env.*
+!.env.example
+
+# Private local docs (real store URLs / specifics) — keep out of public repo
+README.local.md
+
+# Dependencies
+node_modules/
+
+# Vercel
+.vercel
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
+
+.vercel
