@@ -106,7 +106,7 @@ module.exports = async (req, res) => {
       billing_address_collection: 'auto',
       phone_number_collection: { enabled: true },
       shipping_address_collection: { allowed_countries: ['ES'] },
-      success_url: `${STORE_URL}/?stripe_paid=1&sid={CHECKOUT_SESSION_ID}`,
+      success_url: `${STORE_URL}/pages/gracias?sid={CHECKOUT_SESSION_ID}`,
       cancel_url: `${STORE_URL}/cart`,
       metadata: {
         source: 'storefront',
