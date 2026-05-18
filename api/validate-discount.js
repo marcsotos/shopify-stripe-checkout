@@ -50,11 +50,12 @@ module.exports = async (req, res) => {
     if (!d.ok) return res.status(200).json({ ok: false, error: d.reason });
 
     const saved = (d.amountCents / 100).toFixed(2);
-    const label =
-      d.type === 'percentage'
-        ? `${d.code}: -${d.percent}% (ahorras ${saved} EUR)`
-        : `${d.code}: -${saved} EUR`;
-    return res.status(200).json({ ok: true, label });
+    return res.status(200).json({
+      ok: true,
+      code: d.code,
+      percent: d.type === 'percentage' ? d.percent : null,
+      savedEur: saved,
+    });
   } catch (err) {
     console.error('[validate-discount]', err);
     return res
