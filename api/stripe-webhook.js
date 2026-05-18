@@ -14,7 +14,11 @@
  */
 
 const Stripe = require('stripe');
-const { orderExistsForSession, createOrder } = require('../lib/shopify');
+const {
+  orderExistsForSession,
+  createOrder,
+  isExcludedSpanishCP,
+} = require('../lib/shopify');
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2025-09-30.clover',
@@ -133,6 +137,40 @@ module.exports = async (req, res) => {
       });
     } catch (e) {
       console.error('[stripe-webhook] session retrieve failed (non-fatal):', e.message);
+    }
+
+    // Layer 2 safety net: if the real shipping address is an excluded
+    // Spanish region (slipped past the cart check), refund and do NOT
+    // create an unfulfillable order.
+    const shipAddr =
+      full.collected_information?.shipping_details?.address ||
+      full.customer_details?.address ||
+      shipping?.address ||
+      details.address ||
+      {};
+    if (
+      String(shipAddr.country || '').toUpperCase() === 'ES' &&
+      isExcludedSpanishCP(shipAddr.postal_code)
+    ) {
+      try {
+        const pi = full.payment_intent || session.payment_intent;
+        if (pi) {
+          await stripe.refunds.create({
+            payment_intent: typeof pi === 'string' ? pi : pi.id,
+          });
+        }
+      } catch (e) {
+        console.error(
+          '[stripe-webhook] auto-refund failed (refund manually):',
+          e.message
+        );
+      }
+      console.warn(
+        `[stripe-webhook] excluded region CP ${shipAddr.postal_code} — refunded, no order for ${session.id}`
+      );
+      return res
+        .status(200)
+        .json({ received: true, refused: 'excluded-region', refunded: true });
     }
 
     const shippingLines = [];

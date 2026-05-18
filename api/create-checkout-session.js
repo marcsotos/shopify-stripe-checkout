@@ -14,6 +14,7 @@
  */
 
 const Stripe = require('stripe');
+const { isExcludedSpanishCP, checkStock } = require('../lib/shopify');
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2025-09-30.clover',
@@ -175,6 +176,38 @@ module.exports = async (req, res) => {
 
     // Zone chosen in the cart ("ES" | "EU" | "INTL"); defaults to España.
     const zoneKey = String(cart.ship_zone || 'ES').toUpperCase();
+
+    // Layer 1 (server-side, can't be bypassed): block excluded Spanish
+    // regions before taking any payment.
+    if (zoneKey === 'ES') {
+      const cp = String(cart.ship_cp || '').replace(/\D/g, '');
+      if (!/^\d{5}$/.test(cp)) {
+        return res
+          .status(400)
+          .json({ error: 'Indica un código postal de envío válido (5 dígitos).' });
+      }
+      if (isExcludedSpanishCP(cp)) {
+        return res.status(400).json({
+          error:
+            'Lo sentimos, por ahora no realizamos envíos a Canarias, Baleares, Ceuta ni Melilla.',
+        });
+      }
+    }
+
+    // Re-check live stock so we never charge for something unavailable.
+    const stock = await checkStock(
+      items.map((i) => ({
+        id: i.id,
+        quantity: i.quantity,
+        name: i.product_title || i.title || `#${i.id}`,
+      }))
+    );
+    if (!stock.ok) {
+      return res.status(400).json({
+        error: `Sin stock suficiente: ${stock.problems.join(', ')}. Ajusta el carrito.`,
+      });
+    }
+
     const { allowed_countries, shipping_options } = shippingFor(
       zoneKey,
       subtotalCents
