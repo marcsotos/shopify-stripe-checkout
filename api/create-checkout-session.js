@@ -30,26 +30,42 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || STORE_URL)
 // minimum the webhook needs to rebuild the Shopify order: [variantId, qty].
 const METADATA_MAX = 500;
 
-// Replicates the store's Shopify shipping rates. NOTE: hosted Stripe
-// Checkout shows the SAME options regardless of the address entered (it
-// doesn't recompute per zone like Shopify), so all rates are listed with
-// a zone hint and the shopper picks. Max 5 options.
-const SHIPPING_OPTIONS = [
-  ['Envío estándar gratuito (España)', 0],
-  ['Envío estándar (España)', 500],
-  ['Envío Premium con seguro (España)', 650],
-  ['Estándar Internacional · UE', 899],
-  ['Estándar Internacional', 1299],
-].map(([display_name, amount]) => ({
-  shipping_rate_data: {
-    type: 'fixed_amount',
-    display_name,
-    fixed_amount: { amount, currency: CURRENCY },
+// Store's Shopify shipping rates, split by zone. The cart sends the chosen
+// zone (ES | EU | INTL) so the Stripe page shows ONLY that zone's rates and
+// only that zone's countries — effectively dynamic shipping with hosted
+// Checkout (which can't recompute per-address itself).
+const ZONES = {
+  ES: {
+    countries: ['ES'],
+    rates: [
+      ['Envío estándar gratuito', 0],
+      ['Envío estándar', 500],
+      ['Envío Premium con seguro', 650],
+    ],
   },
-}));
+  EU: {
+    countries: ['AT','BE','BG','CY','CZ','DE','DK','EE','FI','FR','GR','HR','HU','IE','IT','LT','LU','LV','MT','NL','PL','PT','RO','SE','SI','SK'],
+    rates: [['Estándar Internacional · UE', 899]],
+  },
+  INTL: {
+    countries: ['AE','AU','CA','CH','GB','HK','IL','JP','KR','MY','NO','NZ','SG','US'],
+    rates: [['Estándar Internacional', 1299]],
+  },
+};
 
-// Union of the store's Shopify shipping-zone countries (España + UE + Intl).
-const ALLOWED_COUNTRIES = ['AE','AT','AU','BE','BG','CA','CH','CY','CZ','DE','DK','EE','ES','FI','FR','GB','GR','HK','HR','HU','IE','IL','IT','JP','KR','LT','LU','LV','MT','MY','NL','NO','NZ','PL','PT','RO','SE','SG','SI','SK','US'];
+function shippingFor(zoneKey) {
+  const zone = ZONES[zoneKey] || ZONES.ES;
+  return {
+    allowed_countries: zone.countries,
+    shipping_options: zone.rates.map(([display_name, amount]) => ({
+      shipping_rate_data: {
+        type: 'fixed_amount',
+        display_name,
+        fixed_amount: { amount, currency: CURRENCY },
+      },
+    })),
+  };
+}
 
 // Optional ecommerce fields collected on the Stripe page.
 const CUSTOM_FIELDS = [
@@ -136,20 +152,25 @@ module.exports = async (req, res) => {
       });
     }
 
+    // Zone chosen in the cart ("ES" | "EU" | "INTL"); defaults to España.
+    const zoneKey = String(cart.ship_zone || 'ES').toUpperCase();
+    const { allowed_countries, shipping_options } = shippingFor(zoneKey);
+
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       line_items: lineItems,
       locale: 'es',
       billing_address_collection: 'auto',
       phone_number_collection: { enabled: true },
-      shipping_address_collection: { allowed_countries: ALLOWED_COUNTRIES },
-      shipping_options: SHIPPING_OPTIONS,
+      shipping_address_collection: { allowed_countries },
+      shipping_options,
       custom_fields: CUSTOM_FIELDS,
       success_url: `${STORE_URL}/pages/gracias?sid={CHECKOUT_SESSION_ID}`,
       cancel_url: `${STORE_URL}/cart`,
       metadata: {
         source: 'storefront',
         cart_token: cart.token || '',
+        ship_zone: zoneKey,
         shopify_line_items: compact,
       },
     });
