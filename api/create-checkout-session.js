@@ -53,11 +53,19 @@ const ZONES = {
   },
 };
 
-function shippingFor(zoneKey) {
+// Free shipping unlocks at this product subtotal (cents, after discounts).
+const FREE_SHIPPING_MIN = 5000; // 50,00 € (inclusive)
+
+function shippingFor(zoneKey, subtotalCents) {
   const zone = ZONES[zoneKey] || ZONES.ES;
+  // Hide any free (0 €) rate until the subtotal reaches the threshold.
+  let rates = zone.rates.filter(
+    ([, amount]) => amount > 0 || subtotalCents >= FREE_SHIPPING_MIN
+  );
+  if (rates.length === 0) rates = zone.rates; // never leave 0 options
   return {
     allowed_countries: zone.countries,
-    shipping_options: zone.rates.map(([display_name, amount]) => ({
+    shipping_options: rates.map(([display_name, amount]) => ({
       shipping_rate_data: {
         type: 'fixed_amount',
         display_name,
@@ -152,9 +160,25 @@ module.exports = async (req, res) => {
       });
     }
 
+    // Product subtotal (cents, after discounts, no shipping) for the
+    // free-shipping threshold. Prefer Shopify's cart.total_price.
+    const subtotalCents = Number.isFinite(cart.total_price)
+      ? cart.total_price
+      : items.reduce(
+          (s, i) =>
+            s +
+            (Number.isFinite(i.final_line_price)
+              ? i.final_line_price
+              : (i.final_price || 0) * (i.quantity || 1)),
+          0
+        );
+
     // Zone chosen in the cart ("ES" | "EU" | "INTL"); defaults to España.
     const zoneKey = String(cart.ship_zone || 'ES').toUpperCase();
-    const { allowed_countries, shipping_options } = shippingFor(zoneKey);
+    const { allowed_countries, shipping_options } = shippingFor(
+      zoneKey,
+      subtotalCents
+    );
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
