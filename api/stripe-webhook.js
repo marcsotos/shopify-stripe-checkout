@@ -124,6 +124,36 @@ module.exports = async (req, res) => {
       details.phone
     );
 
+    // Re-fetch with the shipping rate expanded so we can label the
+    // shipping line and read the custom fields (NIF / delivery notes).
+    let full = session;
+    try {
+      full = await stripe.checkout.sessions.retrieve(session.id, {
+        expand: ['shipping_cost.shipping_rate'],
+      });
+    } catch (e) {
+      console.error('[stripe-webhook] session retrieve failed (non-fatal):', e.message);
+    }
+
+    const shippingLines = [];
+    if (full.shipping_cost && full.shipping_cost.amount_total != null) {
+      const rate = full.shipping_cost.shipping_rate;
+      shippingLines.push({
+        title:
+          (rate && typeof rate === 'object' && rate.display_name) || 'Envío',
+        price: (full.shipping_cost.amount_total / 100).toFixed(2),
+      });
+    }
+
+    const noteAttributes = [];
+    for (const cf of full.custom_fields || []) {
+      const value = cf.text && cf.text.value;
+      if (!value) continue;
+      if (cf.key === 'nif') noteAttributes.push({ name: 'NIF/CIF', value });
+      if (cf.key === 'notas')
+        noteAttributes.push({ name: 'Notas de entrega', value });
+    }
+
     const order = await createOrder({
       sessionId: session.id,
       lineItems,
@@ -136,6 +166,8 @@ module.exports = async (req, res) => {
       },
       shippingAddress,
       billingAddress,
+      shippingLines,
+      noteAttributes,
     });
 
     // Stamp the Stripe session with the order's status page so the

@@ -30,6 +30,43 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || STORE_URL)
 // minimum the webhook needs to rebuild the Shopify order: [variantId, qty].
 const METADATA_MAX = 500;
 
+// Replicates the store's Shopify shipping rates. NOTE: hosted Stripe
+// Checkout shows the SAME options regardless of the address entered (it
+// doesn't recompute per zone like Shopify), so all rates are listed with
+// a zone hint and the shopper picks. Max 5 options.
+const SHIPPING_OPTIONS = [
+  ['Envío estándar gratuito (España)', 0],
+  ['Envío estándar (España)', 500],
+  ['Envío Premium con seguro (España)', 650],
+  ['Estándar Internacional · UE', 899],
+  ['Estándar Internacional', 1299],
+].map(([display_name, amount]) => ({
+  shipping_rate_data: {
+    type: 'fixed_amount',
+    display_name,
+    fixed_amount: { amount, currency: CURRENCY },
+  },
+}));
+
+// Union of the store's Shopify shipping-zone countries (España + UE + Intl).
+const ALLOWED_COUNTRIES = ['AE','AT','AU','BE','BG','CA','CH','CY','CZ','DE','DK','EE','ES','FI','FR','GB','GR','HK','HR','HU','IE','IL','IT','JP','KR','LT','LU','LV','MT','MY','NL','NO','NZ','PL','PT','RO','SE','SG','SI','SK','US'];
+
+// Optional ecommerce fields collected on the Stripe page.
+const CUSTOM_FIELDS = [
+  {
+    key: 'nif',
+    label: { type: 'custom', custom: 'NIF / CIF (para factura)' },
+    type: 'text',
+    optional: true,
+  },
+  {
+    key: 'notas',
+    label: { type: 'custom', custom: 'Notas de entrega' },
+    type: 'text',
+    optional: true,
+  },
+];
+
 function applyCors(req, res) {
   const origin = req.headers.origin;
   if (origin && ALLOWED_ORIGINS.includes(origin)) {
@@ -105,7 +142,9 @@ module.exports = async (req, res) => {
       locale: 'es',
       billing_address_collection: 'auto',
       phone_number_collection: { enabled: true },
-      shipping_address_collection: { allowed_countries: ['ES'] },
+      shipping_address_collection: { allowed_countries: ALLOWED_COUNTRIES },
+      shipping_options: SHIPPING_OPTIONS,
+      custom_fields: CUSTOM_FIELDS,
       success_url: `${STORE_URL}/pages/gracias?sid={CHECKOUT_SESSION_ID}`,
       cancel_url: `${STORE_URL}/cart`,
       metadata: {
