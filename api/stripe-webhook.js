@@ -138,6 +138,19 @@ module.exports = async (req, res) => {
       billingAddress,
     });
 
+    // Stamp the Stripe session with the order's status page so the
+    // confirmation page can forward instantly (no Shopify tag-search lag).
+    try {
+      await stripe.checkout.sessions.update(session.id, {
+        metadata: {
+          shopify_order: order.name,
+          shopify_order_status_url: order.order_status_url || '',
+        },
+      });
+    } catch (e) {
+      console.error('[stripe-webhook] metadata stamp failed (non-fatal):', e.message);
+    }
+
     console.log(
       `[stripe-webhook] created Shopify order ${order.name} (#${order.id}) for ${session.id}`
     );

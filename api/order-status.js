@@ -2,15 +2,24 @@
  * GET /api/order-status?sid=cs_test_...
  *
  * Polled by the post-payment confirmation page. Returns whether the order
- * for this checkout session has been created yet (the webhook creates it
- * a beat after the shopper is redirected back), plus the native Shopify
- * order-status page URL to forward them to.
+ * for this checkout session has been created yet and the native Shopify
+ * order-status page URL to forward the shopper to.
+ *
+ * Primary source: the Stripe session metadata, which the webhook stamps
+ * with the order status URL the instant the order is created (no Shopify
+ * tag-search indexing lag). Fallback: Shopify tag search, in case the
+ * metadata stamp failed.
  *
  *   { ready: false }
  *   { ready: true, name: "#1008", statusUrl: "https://.../orders/..." }
  */
 
+const Stripe = require('stripe');
 const { getOrderStatusForSession } = require('../lib/shopify');
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+  apiVersion: '2025-09-30.clover',
+});
 
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || process.env.STORE_URL || '')
   .split(',')
@@ -41,10 +50,26 @@ module.exports = async (req, res) => {
 
   if (!sid) return res.status(400).json({ error: 'missing sid' });
 
+  res.setHeader('Cache-Control', 'no-store');
+
+  // Primary: Stripe session metadata (instant once the webhook ran).
+  try {
+    const session = await stripe.checkout.sessions.retrieve(sid);
+    const url = session?.metadata?.shopify_order_status_url;
+    if (url) {
+      return res.status(200).json({
+        ready: true,
+        name: session.metadata.shopify_order || '',
+        statusUrl: url,
+      });
+    }
+  } catch (e) {
+    /* unknown/garbage sid, or Stripe hiccup — fall through */
+  }
+
+  // Fallback: Shopify tag search (covers a failed metadata stamp).
   try {
     const status = await getOrderStatusForSession(sid);
-    // Don't let the browser/CDN cache a transient "not ready yet".
-    res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json(status);
   } catch (err) {
     console.error('[order-status]', err);
