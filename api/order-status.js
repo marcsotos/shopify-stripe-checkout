@@ -44,11 +44,15 @@ module.exports = async (req, res) => {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  const qs = new URL(req.url, 'http://x').searchParams;
+  // `cs` is the param the storefront uses (Shopify strips `sid`); accept
+  // `sid` too for backward compatibility.
   const sid =
-    (req.query && req.query.sid) ||
-    new URL(req.url, 'http://x').searchParams.get('sid');
+    (req.query && (req.query.cs || req.query.sid)) ||
+    qs.get('cs') ||
+    qs.get('sid');
 
-  if (!sid) return res.status(400).json({ error: 'missing sid' });
+  if (!sid) return res.status(400).json({ error: 'missing session id' });
 
   res.setHeader('Cache-Control', 'no-store');
 

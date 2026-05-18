@@ -189,7 +189,9 @@ module.exports = async (req, res) => {
       shipping_address_collection: { allowed_countries },
       shipping_options,
       custom_fields: CUSTOM_FIELDS,
-      success_url: `${STORE_URL}/pages/gracias?sid={CHECKOUT_SESSION_ID}`,
+      // NOTE: Shopify strips a `sid` query param via 301 (reserved word),
+      // so the session id is passed as `cs`.
+      success_url: `${STORE_URL}/pages/gracias?cs={CHECKOUT_SESSION_ID}`,
       cancel_url: `${STORE_URL}/cart`,
       metadata: {
         source: 'storefront',
