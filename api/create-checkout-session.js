@@ -212,12 +212,47 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Optional discount code (order-level % or fixed). Validated against
-    // Shopify, then applied as a one-off Stripe coupon so the shopper pays
-    // less; the webhook records it on the Shopify order to reconcile.
+    // Discounts. Two sources, mutually exclusive (Stripe Checkout allows
+    // only ONE coupon/session):
+    //  1) ANY discount already on the Shopify cart (automatic, app, or a
+    //     code applied to the Shopify cart) -> mirror it so Stripe charges
+    //     exactly what the cart shows. Our line items are at final_price
+    //     (line-level discounts only); cart.total_price also includes
+    //     cart/order-level discounts.
+    //  2) else, a code typed in our own field -> validate + apply.
+    const lineSum = items.reduce(
+      (s, i) =>
+        s +
+        (Number.isFinite(i.final_line_price)
+          ? i.final_line_price
+          : (i.final_price || 0) * (i.quantity || 1)),
+      0
+    );
+    const cartTotal = Number.isFinite(cart.total_price)
+      ? cart.total_price
+      : lineSum;
+    const cartLevelDiscount = Math.max(0, lineSum - cartTotal);
+
     const discounts = [];
     let discountMeta = {};
-    if (cart.discount_code) {
+
+    if (cartLevelDiscount > 0) {
+      const title =
+        (cart.cart_level_discount_applications &&
+          cart.cart_level_discount_applications[0] &&
+          cart.cart_level_discount_applications[0].title) ||
+        cart.discount_code ||
+        'Descuento';
+      const coupon = await stripe.coupons.create({
+        amount_off: cartLevelDiscount,
+        currency: CURRENCY,
+        duration: 'once',
+        name: String(title).slice(0, 40),
+        max_redemptions: 1,
+      });
+      discounts.push({ coupon: coupon.id });
+      discountMeta = { discount_code: String(title).slice(0, 60) };
+    } else if (cart.discount_code) {
       const totalQty = items.reduce((s, i) => s + (i.quantity || 1), 0);
       const d = await validateDiscount(
         cart.discount_code,
