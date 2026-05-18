@@ -14,7 +14,11 @@
  */
 
 const Stripe = require('stripe');
-const { isExcludedSpanishCP, checkStock } = require('../lib/shopify');
+const {
+  isExcludedSpanishCP,
+  checkStock,
+  validateDiscount,
+} = require('../lib/shopify');
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2025-09-30.clover',
@@ -208,12 +212,46 @@ module.exports = async (req, res) => {
       });
     }
 
+    // Optional discount code (order-level % or fixed). Validated against
+    // Shopify, then applied as a one-off Stripe coupon so the shopper pays
+    // less; the webhook records it on the Shopify order to reconcile.
+    const discounts = [];
+    let discountMeta = {};
+    if (cart.discount_code) {
+      const totalQty = items.reduce((s, i) => s + (i.quantity || 1), 0);
+      const d = await validateDiscount(
+        cart.discount_code,
+        subtotalCents,
+        totalQty
+      );
+      if (!d.ok) {
+        return res.status(400).json({ error: d.reason });
+      }
+      const coupon =
+        d.type === 'percentage'
+          ? await stripe.coupons.create({
+              percent_off: d.percent,
+              duration: 'once',
+              name: d.code,
+              max_redemptions: 1,
+            })
+          : await stripe.coupons.create({
+              amount_off: d.amountCents,
+              currency: CURRENCY,
+              duration: 'once',
+              name: d.code,
+              max_redemptions: 1,
+            });
+      discounts.push({ coupon: coupon.id });
+      discountMeta = { discount_code: d.code };
+    }
+
     const { allowed_countries, shipping_options } = shippingFor(
       zoneKey,
       subtotalCents
     );
 
-    const session = await stripe.checkout.sessions.create({
+    const sessionParams = {
       mode: 'payment',
       line_items: lineItems,
       locale: 'es',
@@ -231,8 +269,12 @@ module.exports = async (req, res) => {
         cart_token: cart.token || '',
         ship_zone: zoneKey,
         shopify_line_items: compact,
+        ...discountMeta,
       },
-    });
+    };
+    if (discounts.length) sessionParams.discounts = discounts;
+
+    const session = await stripe.checkout.sessions.create(sessionParams);
 
     return res.status(200).json({ url: session.url });
   } catch (err) {

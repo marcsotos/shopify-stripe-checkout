@@ -192,6 +192,22 @@ module.exports = async (req, res) => {
         noteAttributes.push({ name: 'Notas de entrega', value });
     }
 
+    // Discount applied on Stripe → record it on the Shopify order so the
+    // total reconciles and the code's usage is counted. Use the exact
+    // amount Stripe discounted (fixed_amount) for a precise match.
+    const discountCodes = [];
+    const discAmount = full.total_details && full.total_details.amount_discount;
+    const discCode =
+      (full.metadata && full.metadata.discount_code) ||
+      (session.metadata && session.metadata.discount_code);
+    if (discCode && discAmount > 0) {
+      discountCodes.push({
+        code: discCode,
+        amount: (discAmount / 100).toFixed(2),
+        type: 'fixed_amount',
+      });
+    }
+
     const order = await createOrder({
       sessionId: session.id,
       lineItems,
@@ -206,6 +222,7 @@ module.exports = async (req, res) => {
       billingAddress,
       shippingLines,
       noteAttributes,
+      discountCodes,
     });
 
     // Stamp the Stripe session with the order's status page so the
