@@ -46,13 +46,15 @@ function splitName(full) {
 function toShopifyAddress(stripeAddr, name, phone) {
   if (!stripeAddr) return null;
   const { first_name, last_name } = splitName(name);
+  // NOTE: do NOT send `province` — Stripe's `state` (e.g. "V") is not a
+  // valid Shopify province code for ES, and an invalid province makes
+  // Shopify drop the whole shipping_address. Shopify infers it from zip.
   return {
     first_name,
     last_name,
     address1: stripeAddr.line1 || '',
     address2: stripeAddr.line2 || '',
     city: stripeAddr.city || '',
-    province: stripeAddr.state || '',
     zip: stripeAddr.postal_code || '',
     country_code: stripeAddr.country || '',
     phone: phone || '',
