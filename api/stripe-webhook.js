@@ -45,7 +45,13 @@ function splitName(full) {
 /** Stripe address shape → Shopify address shape. */
 function toShopifyAddress(stripeAddr, name, phone) {
   if (!stripeAddr) return null;
-  const { first_name, last_name } = splitName(name);
+  let { first_name, last_name } = splitName(name);
+  // Shopify SILENTLY DROPS the whole shipping_address if first_name or
+  // last_name is blank (verified). Single-word names (e.g. "MARCO") have
+  // no last name -> guarantee both are non-blank so the address is kept
+  // and the order is shippable.
+  if (!first_name) first_name = 'Cliente';
+  if (!last_name) last_name = '.';
   // NOTE: do NOT send `province` — Stripe's `state` (e.g. "V") is not a
   // valid Shopify province code for ES, and an invalid province makes
   // Shopify drop the whole shipping_address. Shopify infers it from zip.
