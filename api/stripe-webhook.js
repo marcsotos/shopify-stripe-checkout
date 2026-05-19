@@ -111,8 +111,21 @@ module.exports = async (req, res) => {
       quantity,
     }));
 
-    const details = session.customer_details || {};
+    // Re-fetch the authoritative session FIRST (event payload shape
+    // varies); build the address from it so it's never missing.
+    let full = session;
+    try {
+      full = await stripe.checkout.sessions.retrieve(session.id, {
+        expand: ['shipping_cost.shipping_rate', 'customer_details'],
+      });
+    } catch (e) {
+      console.error('[stripe-webhook] session retrieve failed (non-fatal):', e.message);
+    }
+
+    const details = full.customer_details || session.customer_details || {};
     const shipping =
+      full.collected_information?.shipping_details ||
+      full.shipping_details ||
       session.collected_information?.shipping_details ||
       session.shipping_details ||
       null;
@@ -123,21 +136,10 @@ module.exports = async (req, res) => {
       details.phone
     );
     const billingAddress = toShopifyAddress(
-      details.address,
-      details.name,
+      details.address || shipping?.address,
+      details.name || shipping?.name,
       details.phone
     );
-
-    // Re-fetch with the shipping rate expanded so we can label the
-    // shipping line and read the custom fields (NIF / delivery notes).
-    let full = session;
-    try {
-      full = await stripe.checkout.sessions.retrieve(session.id, {
-        expand: ['shipping_cost.shipping_rate'],
-      });
-    } catch (e) {
-      console.error('[stripe-webhook] session retrieve failed (non-fatal):', e.message);
-    }
 
     // Layer 2 safety net: if the real shipping address is an excluded
     // Spanish region (slipped past the cart check), refund and do NOT
